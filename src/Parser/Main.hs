@@ -185,7 +185,7 @@ aPattern = choice [ do v <- try (varid `followedBy` reservedOp "@")
                        PAs v `fmap` located aPattern
                   , try (do ctor <- conid
                             args <- brackets (located fieldPattern `sepBy` symbol "|")
-                            return (PBitdata ctor (map makePattern args)))
+                            return (PLabeled ctor (map makePattern args)))
                   , reservedOp "_" >> return PWild
                   , try (reserved "()") >> return (PCon "Unit")
                   , try (PCon `fmap` conid)
@@ -490,11 +490,19 @@ dataDecl = do opaque <- option False (reserved "opaque" >> return True)
                                    name <- located consym
                                    rhs <- located atype
                                    preds <- option [] $ reserved "if" >> commaSep1 (located predicate)
-                                   return (Ctor name [] preds [lhs, rhs])
+                                   return (Ctor name [] preds [at lhs (DataField Nothing lhs), at rhs (DataField Nothing rhs)])
+                        , try $ do name <- located conid
+                                   fields <- brackets (field `sepBy` reservedOp "|")
+                                   preds <- option [] $ reserved "if" >> commaSep1 (located predicate)
+                                   return (Ctor name [] preds (concat fields))
                         , do name <- located conid
-                             fields <- many (located atype)
+                             ftypes <- many (located atype)
                              preds <- option [] $ reserved "if" >> commaSep1 (located predicate)
-                             return (Ctor name [] preds fields) ]
+                             return (Ctor name [] preds [at t (DataField Nothing t) | t <- ftypes]) ]
+          field = try (do labels <- commaSep1 (located varid)
+                          reservedOp "::"
+                          t <- located atype
+                          return [At loc (DataField (Just lab) t) | At loc lab <- labels])
 
 deriveList :: ParseM [Id]
 deriveList  = option []
@@ -551,8 +559,10 @@ areaDecl = do v <- option False (reserved "volatile" >> return True)
 primitive :: ParseM [Primitive]
 primitive = do reserved "primitive"
                choice [ do reserved "type"
-                           t <- located type_
-                           return [PrimType t]
+                           names <- commaSep (located tycon)
+                           reservedOp "::"
+                           k <- located kind
+                           return [PrimType (At l (TyKinded (fmap TyCon name) k)) | name@(At l _) <- names]
                       , do public <- option True (reserved "private" >> return False)
                            ss <- typeSignatures (varid <|> conid)
                            let (ctors, values) = partition (\(Signature name _) -> isConId name) ss
